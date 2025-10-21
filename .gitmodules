@@ -1,0 +1,3 @@
+[submodule "pulp-trainlib"]
+	path = pulp-trainlib
+	url = https://github.com/pulp-platform/pulp-trainlib.git
