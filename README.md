@@ -2,8 +2,12 @@
 
 ## Material
 
-Assignment: [here](docs/assignment.docx)
-Sldes: [here](docs/slides.pdf)
+1) Assignment: [here](docs/assignment.docx)
+2) Slides: [here](docs/slides.pdf)
+
+Reminders:
+1) [Multi-head Self Attention](docs/Multihead_Attention.xlsx)
+2) [Full-Stack Transformer](docs/Transformer_Full_Stack.xlsx)
 
 
 ## How to deliver the assignment:
