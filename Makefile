@@ -27,8 +27,7 @@ APP_CFLAGS += -I. -I$(TRAIN_LIB)/include
 
 # fp16 math only: without it, double constants (e.g. M_PI) need fp16<->double conversions missing in the toolchain
 APP_CFLAGS += -fsingle-precision-constant
-APP_CFLAGS += -DCLUSTER -DFABRIC -O3 -g3	
-APP_CFLAGS += -DDATA_TYPE=$(DATA_TYPE)
+APP_CFLAGS += -DCLUSTER -DFABRIC -O3 -g3
 
 # Prepare the lab (download and patch PULP-TrainLib, see initialization.sh)
 INIT_OUTPUT := $(shell bash $(CURDIR)/initialization.sh 2>&1)
@@ -39,6 +38,7 @@ endif
 # The lab-local linker script chips/pulp/link.ld (larger L2) is picked up instead of the PULP SDK one,
 # since the linker looks for -Tchips/pulp/link.ld in the current directory first.
 
+# Regenerate conf_and_weights_fp16.h/.c from the model in Model/ (check the L1 buffers in net.c against the printed minimum sizes)
 get_header:
 	gcc genHeader.c -o genHeader
 	./genHeader

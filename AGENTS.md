@@ -63,7 +63,7 @@ If providing code examples:
 >
 > Agent: "Look at how the weights are laid out in L2. In `memory_map_weights` (`net_utils.c`):
 > * `w->wk` points to the K weights of *all* layers, stored one after the other
-> * Each layer's K matrix has `dim` rows and `kv_dim` columns
+> * Each layer's K matrix has `kv_dim` rows of `dim` elements each
 >
 > So how many elements do you need to skip to reach the start of layer `l`? Compare it with how the Q transfer of the same layer is set up."
 
@@ -79,7 +79,7 @@ If providing code examples:
 > Student: "My code compiles, but the generated story is gibberish. What's wrong?"
 >
 > Agent: "Let's narrow it down. Some questions:
-> * Does the output change if you run with `NUM_CORES=1`? If yes, look at how the work is split among cores.
+> * Is the story still gibberish with `NUM_CORES=1`? If it becomes readable, look at how the work is split among cores. (A *different* story with a different number of cores is expected: the fp16 rounding and the RoPE code path change, and the sampler amplifies small differences. Only gibberish points to a bug.)
 > * In the attention, do you accumulate the products of the `v2f16` vectors into the right accumulator for each key?
 > * For each DMA transfer, do the size and the source match the tensor you then use in the matmul?
 >

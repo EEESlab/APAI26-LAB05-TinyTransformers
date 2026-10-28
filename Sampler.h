@@ -35,4 +35,4 @@ unsigned int random_u32(unsigned long long *state);
 
 float random_f32(unsigned long long *state);
 
-int sample(Sampler* sampler, fp16* logits, char isLastPos);
+int sample(Sampler* sampler, fp16* logits);

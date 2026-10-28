@@ -120,7 +120,7 @@ float random_f32(unsigned long long *state) { // random float32 in [0,1)
     return (random_u32(state) >> 8) / 16777216.0f;
 }
 
-int sample(Sampler* sampler, fp16* logits, char isLastPos) {
+int sample(Sampler* sampler, fp16* logits) {
     // sample the token given the logits and some hyperparameters
     int next;
     //printf("sampler->temperature: %f\n", sampler->temperature);

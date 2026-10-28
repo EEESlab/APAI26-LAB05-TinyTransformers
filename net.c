@@ -6,13 +6,14 @@ PI_L1 fp16 buffer_n_cores[NUM_CORES];   // for parallelized RMSNorm and softmax 
 // Transformer model
 
 // L1 buffer allocation
-PI_L1  fp16 BUFF1[64];
-PI_L1  fp16 BUFF2[64];
-PI_L1  fp16 BUFF3[172];
-PI_L1  fp16 BUFF4[N_HEADS*(STEPS+1)];   // also holds the attention scores: n_heads rows of STEPS+1 elements
+// sized for this model: check them against the minimum sizes printed by genHeader (make get_header)
+PI_L1  fp16 BUFF1[DIM];
+PI_L1  fp16 BUFF2[DIM];
+PI_L1  fp16 BUFF3[HIDDEN_DIM];
+PI_L1  fp16 BUFF4[N_HEADS*STEPS];   // also holds the attention scores: n_heads rows of STEPS elements
 
-PI_L1  fp16 BUFF_W_1[11008];
-PI_L1  fp16 BUFF_W_2[11008];
+PI_L1  fp16 BUFF_W_1[DIM*HIDDEN_DIM];
+PI_L1  fp16 BUFF_W_2[DIM*HIDDEN_DIM];
 
 
 
@@ -44,9 +45,9 @@ void matmul(fp16* xout, fp16* x, fp16* w, int n, int d) {
 
 void memcopy_setup(fp16 * ext,fp16* loc, size_t size, int dir,pi_cl_dma_copy_t* dma_cmd){
 
-    // ext: indicates the location in the external memory FROM which data are transferred (it depends from dfir actually but in your cases you can assume this)
-    // loc: indicates the location in the local (L1) memory TO which data are transferred (same caveat as up)
-    // size: the size in number of bytes of data transferred 
+    // ext: indicates the location in the external memory FROM which data are transferred (strictly, it depends on dir, but in your case you can assume this)
+    // loc: indicates the location in the local (L1) memory TO which data are transferred (same caveat as above)
+    // size: the size in number of bytes of data transferred (at most 65535 bytes per transfer)
     // dir: direction of the transfer
     // dma_cmd: reference struct for passing command to the data mover (do not care at the moment you will find it filled)
 
@@ -54,6 +55,7 @@ void memcopy_setup(fp16 * ext,fp16* loc, size_t size, int dir,pi_cl_dma_copy_t* 
     dma_cmd->loc = (uint32_t)loc;
     dma_cmd->size = size;
     dma_cmd->dir = dir;
+    dma_cmd->merge = 0;     // start a new transfer (not merged with the previous one)
 
     pi_cl_dma_memcpy(dma_cmd);
 
@@ -90,7 +92,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
 
 
     // forward all the layers
-    for(unsigned long long l = 0; l < p->n_layers; l++) {
+    for(int l = 0; l < p->n_layers; l++) {
         // key and value point to the k cache
         int loff = l * STEPS * kv_dim; // kv cache layer offset for convenience
         // s->k = s->key_cache + loff + pos * kv_dim;
@@ -104,11 +106,13 @@ fp16* forward(Transformer* transformer, int token, int pos) {
          * TASK 1:
          * 
          * Complete this function. Be aware: the execution of the matmul is down in the code, not here.
-         * memcopy_setup is define in this file: look inside the function to understand the arguments. 
+         * memcopy_setup is defined in this file: look inside the function to understand the arguments.
          */
         memcopy_setup(,,,PI_CL_DMA_DIR_EXT2LOC,&kv_weight);
 
-        pi_cl_dma_wait(&token_emb_table_to_x);
+        // the token embedding is transferred only once, before the first layer
+        if(l == 0)
+            pi_cl_dma_wait(&token_emb_table_to_x);
         pi_cl_dma_wait(&rms_weight);
 
         rmsnorm_parallelized_fp16(s->xb, x, BUFF4, buffer_n_cores, dim);
@@ -136,7 +140,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
          * TASK 1:
          * 
          * Complete this function. Be aware: the execution of the matmul is down in the code, not here.
-         * memcopy_setup is define in this file: look inside the function to understand the arguments. 
+         * memcopy_setup is defined in this file: look inside the function to understand the arguments.
          */
         memcopy_setup(,,,PI_CL_DMA_DIR_EXT2LOC,&q_weight);
 
@@ -148,8 +152,6 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         matmul(BUFF4, s->xb, BUFF_W_2, dim, kv_dim);
 
         // transfer the weights for the matmul calculating the K tensor
-        //complete the value in the brakets (it reuses part of the information of the V transfer
-        //so you need to change only one parameter )
         /**
          * TASK 1:
          *
@@ -165,7 +167,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
 
         pi_cl_dma_wait(&q_weight);
 
-        //MATMUL for caluclating the Q Tensor
+        //MATMUL for calculating the Q Tensor
         matmul(s->q, s->xb, BUFF_W_1, dim, dim);
         
         // transfer the key cache to BUFF_W_1 (except for the current position)
@@ -176,7 +178,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         s->k = BUFF_W_1 + kv_dim*pos;
         pi_cl_dma_wait(&kv_weight);
 
-        //MATMUL for caluclating the K Tensor
+        //MATMUL for calculating the K Tensor
         matmul(s->k, s->xb, BUFF_W_2, dim, kv_dim);
 
         // transfer the value cache to BUFF_W_2
@@ -189,7 +191,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
 
         if( head_size == NUM_CORES ){
-            // current version of rope_parallelized_fp16_cl work only if for head_size == N_CORES
+            // rope_parallelized_fp16_cl requires 2*NUM_CORES to be a multiple of head_size (see net_utils.c)
             // TODO: implement a more general version of rope_parallelized_fp16_cl
             struct rope_args_fp16 ra;
             ra.q = s->q;
@@ -247,7 +249,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
 
         pi_cl_dma_wait(&kv_to_L2);
         
-        // tranfers the weights for the wo matmul
+        // transfer the weights for the wo matmul
         pi_cl_dma_copy_t wo_to_L1;
         memcopy_setup((w->wo + l*dim*dim),BUFF_W_1,dim * dim * sizeof(*w->wo), PI_CL_DMA_DIR_EXT2LOC,&wo_to_L1);
 
@@ -259,7 +261,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         memcopy_setup((w->rms_ffn_weight + l*dim),BUFF4,dim * sizeof(*w->rms_ffn_weight), PI_CL_DMA_DIR_EXT2LOC,&rms_ffn_weight_to_L1);
 
 
-        // tranfers the weights for the first matmul in ffn
+        // transfer the weights for the first matmul in ffn
         pi_cl_dma_copy_t mm1_ffn_weight_to_L1;
         memcopy_setup((w->w1 + l*dim*hidden_dim),BUFF_W_2,dim * hidden_dim * sizeof(*w->w1), PI_CL_DMA_DIR_EXT2LOC,&mm1_ffn_weight_to_L1);
 
@@ -289,7 +291,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         s->hb = BUFF3;
         s->hb2 = BUFF4;
 
-        // tranfers the weights for the second matmul in ffn
+        // transfer the weights for the second matmul in ffn
         pi_cl_dma_copy_t mm2_ffn_weight_to_L1;
         memcopy_setup((w->w3 + l*dim*hidden_dim),BUFF_W_1,dim * hidden_dim * sizeof(*w->w3), PI_CL_DMA_DIR_EXT2LOC,&mm2_ffn_weight_to_L1);
 
@@ -339,7 +341,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         pi_cl_team_fork(NUM_CORES, vect_sum_fp16, &vsa);
     }
     
-    int mm_div = 4;   // split matmul in mm_div part because it's too big. Must be a divider of vocab_size
+    int mm_div = 4;   // split matmul in mm_div part because it's too big. Must be even (two parts per iteration) and a divider of vocab_size
     int part = p->vocab_size / mm_div; 
     s->logits = BUFF4;
     
@@ -351,13 +353,14 @@ fp16* forward(Transformer* transformer, int token, int pos) {
     mm_weights_to_BUFF_W_2.loc = (uint32_t) BUFF_W_2;
     mm_weights_to_BUFF_W_2.size = dim * part * sizeof(*w->wcls);
     mm_weights_to_BUFF_W_2.dir = PI_CL_DMA_DIR_EXT2LOC;
+    mm_weights_to_BUFF_W_2.merge = 0;
     
     // final rmsnorm
     pi_cl_dma_wait(&rms_weight);
 
     rmsnorm_parallelized_fp16(s->xb, x, BUFF4, buffer_n_cores, dim);
     
-    // classifier into logits. Orignal implementation: 
+    // classifier into logits. Original implementation:
     // matmul(s->logits, s->xb, w->wcls, p->dim, p->vocab_size);
 
     for(int i=0; i<mm_div; i+=2){
@@ -404,7 +407,7 @@ void net_step(){
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
 
     fp16* log;
-    int token, next, tok_diversi=0;
+    int token, next;
     int num_prompt_tokens=0;
     int* prompt_tokens = PROMPT_TOKENS;
 
@@ -426,7 +429,7 @@ void net_step(){
     //     if(pos < num_prompt_tokens -1)
     //         next = prompt_tokens[pos+1];
     //     else{
-    //         next = 0; //Missing function with these arguments: (&sampler, log, pos==STEPS-1);
+    //         next = 0; //Missing function with these arguments: (&sampler, log);
     //     }
         
     //     // token 1 (BOS) delimits sequences: the model emits it to end the story
@@ -440,6 +443,6 @@ void net_step(){
     //     token = next;
     // }
 
-    
+    printf("\n");
     return;
 }

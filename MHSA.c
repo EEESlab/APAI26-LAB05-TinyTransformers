@@ -9,9 +9,8 @@ void llama2_mhsa_fp16_cl(void *llama2_mhsa_args){
     int kv_mul = args->kv_mul;
     int head_size = args->head_size;
     int n_heads = args->n_heads;
+    int steps = args->steps;
     const fp16 sqrt_head_size = (fp16) sqrtf(head_size);
-
-    int id = pi_core_id();
 
     const uint32_t blockSize = (n_heads + NUM_CORES-1) / NUM_CORES;
     const uint32_t start = pi_core_id()*blockSize;
@@ -21,10 +20,10 @@ void llama2_mhsa_fp16_cl(void *llama2_mhsa_args){
             // get the query vector for this head
             fp16* q = args->q + h * head_size;
             // attention scores for this head
-            fp16* att = args->att + h * (STEPS+1);
+            fp16* att = args->att + h * steps;
             // iterate over all timesteps, including the current one
 
-            fp16 max_val = -100000;
+            fp16 max_val = -65504;    // lowest finite fp16 value
             int t;
             for(t=0; t <= pos-3; t+=4) {
                 // get the key vector for this head and at this timestep

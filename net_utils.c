@@ -67,7 +67,8 @@ void build_transformer(Transformer *t) {
 
 void rope_parallelized_fp16_cl(void* void_args){
 
-    // Works only width head_size = NUM_CORES. TODO: implement a more general version
+    // Core id rotates the pairs i = 2*id + k*2*NUM_CORES with a single frequency, computed for i = 2*id:
+    // this works only if 2*NUM_CORES is a multiple of head_size. TODO: implement a more general version
 
     struct rope_args_fp16* args = (struct rope_args_fp16* ) void_args;
     int head_size = args->head_size;

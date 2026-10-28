@@ -2,30 +2,14 @@
 
 PI_L2 char* PROMPT = "Once upon a time";
 PI_L2 int PROMPT_TOKENS[19];
-// L1 buffer allocation
-// PI_L1 fp16 BUFF1[64];
-// PI_L1 fp16 BUFF2[64];
-// PI_L1 fp16 BUFF3[172];
-// PI_L1 fp16 BUFF4[2048];
-
-// PI_L1 fp16 BUFF_W_1[11008];
-// PI_L1 fp16 BUFF_W_2[11008];
 
 // RunState allocation
 PI_L2 fp16 KEY_CACHE [N_LAYERS*STEPS*KV_DIM];
 PI_L2 fp16 VALUE_CACHE [N_LAYERS*STEPS*KV_DIM];
 
-PI_L2 char PROB_INDEX [VOCAB_SIZE*8];
+PI_L2 char PROB_INDEX [VOCAB_SIZE*8] __attribute__((aligned(4)));
 
 // Tokenizer allocation
-#ifndef _TokenIndex_
-#define _TokenIndex_
-typedef struct {
-char *str;
-int id;
-} TokenIndex;
-#endif
-#define MAX_TOKEN_LENGTH 7
 PI_L2 fp16 VOCAB_SCORES [VOCAB_SIZE] = {
 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 
 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 0.000000, 

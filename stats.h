@@ -75,6 +75,7 @@
 #else // STATS
 
 #define INIT_STATS()
+#define RESET_STATS()
 #define PRE_START_STATS()
 #define START_STATS()
 #define STOP_STATS()

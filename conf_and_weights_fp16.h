@@ -21,7 +21,7 @@
 PI_L2 extern char* PROMPT;
 PI_L2 extern int PROMPT_TOKENS[19];
 
-extern PI_L1 fp16 BUFF1[64];
+extern PI_L1 fp16 BUFF1[DIM];
 extern PI_L1 fp16 buffer_n_cores[NUM_CORES];
 
 // RunState allocation

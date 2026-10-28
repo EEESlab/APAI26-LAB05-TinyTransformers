@@ -14,7 +14,6 @@ void build_tokenizer(Tokenizer* t, int vocab_size) {
     }
 
     t->max_token_length = MAX_TOKEN_LENGTH;
-    int len;
     int j=0;
     for (int i = 0; i < vocab_size; i++) {
         t->vocab[i] = &VOCAB_DATA[j];
