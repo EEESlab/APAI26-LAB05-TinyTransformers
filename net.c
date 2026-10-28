@@ -9,7 +9,7 @@ PI_L1 fp16 buffer_n_cores[NUM_CORES];   // for parallelized RMSNorm and softmax 
 PI_L1  fp16 BUFF1[64];
 PI_L1  fp16 BUFF2[64];
 PI_L1  fp16 BUFF3[172];
-PI_L1  fp16 BUFF4[2048];
+PI_L1  fp16 BUFF4[N_HEADS*(STEPS+1)];   // also holds the attention scores: n_heads rows of STEPS+1 elements
 
 PI_L1  fp16 BUFF_W_1[11008];
 PI_L1  fp16 BUFF_W_2[11008];
@@ -45,7 +45,7 @@ void matmul(fp16* xout, fp16* x, fp16* w, int n, int d) {
 void memcopy_setup(fp16 * ext,fp16* loc, size_t size, int dir,pi_cl_dma_copy_t* dma_cmd){
 
     // ext: indicates the location in the external memory FROM which data are transferred (it depends from dfir actually but in your cases you can assume this)
-    // loc: indicates the location in the external memory TO which data are transferred (same caveat as up)
+    // loc: indicates the location in the local (L1) memory TO which data are transferred (same caveat as up)
     // size: the size in number of bytes of data transferred 
     // dir: direction of the transfer
     // dma_cmd: reference struct for passing command to the data mover (do not care at the moment you will find it filled)
@@ -61,6 +61,7 @@ void memcopy_setup(fp16 * ext,fp16* loc, size_t size, int dir,pi_cl_dma_copy_t* 
 
 
 fp16* forward(Transformer* transformer, int token, int pos) {
+    INIT_STATS();
 
     // a few convenience variables
     Config* p = &transformer->config;
@@ -114,6 +115,21 @@ fp16* forward(Transformer* transformer, int token, int pos) {
 
         // qkv matmuls for this position
 
+        /**
+         * TASK 2.2:
+         *
+         * Profile the V, Q and K matmuls and the attention (pi_cl_team_fork of llama2_mhsa_fp16_cl) of layer l == 0.
+         * Wrap each of them with the macros of stats.h, e.g.:
+         *
+         *   #ifdef STATS
+         *   if (l==0) { printf("\nV matmul: "); RESET_STATS(); START_STATS(); }
+         *   #endif
+         *   matmul(...);
+         *   #ifdef STATS
+         *   if (l==0) { STOP_STATS(); }
+         *   #endif
+         */
+
         // transfer the weights for the matmul calculating the Q tensor 
         pi_cl_dma_copy_t q_weight;
         /**
@@ -122,34 +138,25 @@ fp16* forward(Transformer* transformer, int token, int pos) {
          * Complete this function. Be aware: the execution of the matmul is down in the code, not here.
          * memcopy_setup is define in this file: look inside the function to understand the arguments. 
          */
-        memcopy_setup((w->wq + l*dim*dim),BUFF_W_1,dim*dim*sizeof(*w->wq), PI_CL_DMA_DIR_EXT2LOC,&q_weight);
+        memcopy_setup(,,,PI_CL_DMA_DIR_EXT2LOC,&q_weight);
 
         //wait the completion of the memory transfer for the V weights 
         pi_cl_dma_wait(&kv_weight);
 
-        #ifdef STATS
-        if (l==0)
-        {printf("\nV matmul: \n");
-        RESET_STATS();
-        START_STATS();}
-        #endif
         //MATMUL for calculating the V TENSOR
         //the third argument is the WEIGHT buffer!
         matmul(BUFF4, s->xb, BUFF_W_2, dim, kv_dim);
-        #ifdef STATS
-        if (l==0)
-        {STOP_STATS();}
-        #endif
 
-        // transfer the weights for the matmul calculating the K tensor 
-        //complete the value in the brakets (it reuses part of the information of the V transer 
+        // transfer the weights for the matmul calculating the K tensor
+        //complete the value in the brakets (it reuses part of the information of the V transfer
         //so you need to change only one parameter )
         /**
          * TASK 1:
-         * 
-         * Set the size of the transfer. The dimensions of the KV weights are l, dim, kv_dim.
+         *
+         * Set the offset of the K weights of layer l inside w->wk (size, destination and direction are the same as the V transfer).
+         * The dimensions of the KV weights are l, dim, kv_dim.
          */
-        kv_weight.ext = (uint32_t) (w->wk + /*Transfer size*/);
+        kv_weight.ext = (uint32_t) (w->wk + /*Offset of layer l*/);
         pi_cl_dma_memcpy(&kv_weight);
 
         // transfer the v vector to the value cache
@@ -158,18 +165,8 @@ fp16* forward(Transformer* transformer, int token, int pos) {
 
         pi_cl_dma_wait(&q_weight);
 
-        #ifdef STATS
-        if (l==0)
-        {printf("\nQ matmul: ");
-        RESET_STATS();
-        START_STATS();}
-        #endif
         //MATMUL for caluclating the Q Tensor
         matmul(s->q, s->xb, BUFF_W_1, dim, dim);
-        #ifdef STATS
-        if (l==0)
-        {STOP_STATS();}
-        #endif
         
         // transfer the key cache to BUFF_W_1 (except for the current position)
         pi_cl_dma_copy_t k_cache_to_L1;
@@ -179,18 +176,8 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         s->k = BUFF_W_1 + kv_dim*pos;
         pi_cl_dma_wait(&kv_weight);
 
-        #ifdef STATS
-        if (l==0)
-        {printf("\n K matmul: ");
-        RESET_STATS();
-        START_STATS();}
-        #endif
         //MATMUL for caluclating the K Tensor
         matmul(s->k, s->xb, BUFF_W_2, dim, kv_dim);
-        #ifdef STATS
-        if (l==0)
-        {STOP_STATS();}
-        #endif
 
         // transfer the value cache to BUFF_W_2
         pi_cl_dma_wait(&kv_to_L2);
@@ -256,17 +243,7 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         pi_cl_dma_wait(&k_cache_to_L1);
         pi_cl_dma_wait(&v_cache_to_L1);
 
-        #ifdef STATS
-        if (l==0)
-        {printf("\n ATTENTION: ");
-        RESET_STATS();
-        START_STATS();}
-        #endif
         pi_cl_team_fork(NUM_CORES, llama2_mhsa_fp16_cl, &mhsa_args);
-        #ifdef STATS
-        if (l==0)
-        {STOP_STATS();}
-        #endif
 
         pi_cl_dma_wait(&kv_to_L2);
         
@@ -441,6 +418,7 @@ void net_step(){
     //Missing function with these arguments: (&tokenizer, PROMPT, 1, 0, prompt_tokens, &num_prompt_tokens);
 
     // token = prompt_tokens[0];
+    // // pos counts all tokens, prompt included: at most STEPS tokens are processed
     // for(int pos = 0; pos < steps; pos++ ) {
 
     //     log = 0; //Missing function with these arguments: (&transformer, token, pos);
@@ -451,6 +429,7 @@ void net_step(){
     //         next = 0; //Missing function with these arguments: (&sampler, log, pos==STEPS-1);
     //     }
         
+    //     // token 1 (BOS) delimits sequences: the model emits it to end the story
     //     if(next==1)
     //         break; 
         

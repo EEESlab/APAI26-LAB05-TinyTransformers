@@ -43,3 +43,9 @@ venv/
 *.bak
 *.cache
 
+
+# Office lock files
+~$*
+
+# get_header output
+genHeader

@@ -1,0 +1,26 @@
+diff --git a/lib/sources/pulp_matmul_fp16.c b/lib/sources/pulp_matmul_fp16.c
+index cfb3abc..d208dc9 100644
+--- a/lib/sources/pulp_matmul_fp16.c
++++ b/lib/sources/pulp_matmul_fp16.c
+@@ -447,7 +447,9 @@ void __attribute__((noinline)) mm_fp16_SIMD_2x4 (void * void_args) {
+                     // Leftover on K
+                     if (K & 1) {
+                         Av = (v2f16) {A[indexA], A[indexA]};
+-                        Bv0 = (v2f16) {B[indexB], B[indexB + K]};
++                        // Build the vector through memory: the toolchain cannot pack two fp16 scalars into a v2f16
++                        fp16 Bpair[2] __attribute__((aligned(4))) = {B[indexB], B[indexB + K]};
++                        Bv0 = *((v2f16 *) Bpair);
+ #ifdef DEBUG
+                         printf("------ MM K left (indexA=%d, indexB=%d) => Av = {0x%x, 0x%x}, Bv0 = {0x%x, 0x%x}\n", indexA, indexB,
+                           ((unsigned int) Av)&(0xffff0000)>>16, ((unsigned int) Av)&(0x0000ffff),
+@@ -1608,7 +1610,9 @@ void __attribute__((noinline)) mm_M_fp16_SIMD_2x4 (void * void_args) {
+                     // Leftover in K
+                     if (K & 1) {
+                         Av = (v2f16) {A[indexA], A[indexA]};
+-                        Bv0 = (v2f16) {B[indexB], B[indexB + K]};
++                        // Build the vector through memory: the toolchain cannot pack two fp16 scalars into a v2f16
++                        fp16 Bpair[2] __attribute__((aligned(4))) = {B[indexB], B[indexB + K]};
++                        Bv0 = *((v2f16 *) Bpair);
+ #ifdef DEBUG
+                         printf("------ MM K left (indexA=%d, indexB=%d) => Av = {0x%x, 0x%x}, Bv0 = {0x%x, 0x%x}\n", indexA, indexB,
+                           ((unsigned int) Av)&(0xffff0000)>>16, ((unsigned int) Av)&(0x0000ffff),
