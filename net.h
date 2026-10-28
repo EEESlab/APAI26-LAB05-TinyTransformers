@@ -11,8 +11,8 @@ typedef struct {
     int hidden_dim; // for ffn layers
     int n_layers; // number of layers
     int n_heads; // number of query heads
-    int n_kv_heads; // number of key/value heads (can be < query heads because of multiquery)
-    int vocab_size; // vocabulary size, usually 256 (byte-level)
+    int n_kv_heads; // number of key/value heads (can be < n_heads: grouped-query attention)
+    int vocab_size; // vocabulary size
     int seq_len; // max sequence length
 } Config;
 
@@ -22,11 +22,12 @@ typedef struct {
     // weights for rmsnorms
     fp16* rms_att_weight; // (layer, dim) rmsnorm weights
     fp16* rms_ffn_weight; // (layer, dim)
-    // weights for matmuls. note dim == n_heads * head_size
-    fp16* wq; // weight for the calculating the Q tensor (layer, dim, n_heads * head_size) (as you can imagine weight are stored contiguously per layer!!!)
-    fp16* wk; // weight for the calculating the K tensor (layer, dim, n_kv_heads * head_size)
-    fp16* wv; // weight for the calculating the V tensor(layer, dim, n_kv_heads * head_size)
-    fp16* wo; // (layer, n_heads * head_size, dim)
+    // weights for matmuls, stored as (layer, out, in) with the layers one after the other
+    // note dim == n_heads * head_size and kv_dim == n_kv_heads * head_size
+    fp16* wq; // Q projection (layer, dim, dim)
+    fp16* wk; // K projection (layer, kv_dim, dim)
+    fp16* wv; // V projection (layer, kv_dim, dim)
+    fp16* wo; // output projection (layer, dim, dim)
     // weights for ffn
     fp16* w1; // (layer, hidden_dim, dim)
     fp16* w2; // (layer, dim, hidden_dim)
@@ -45,13 +46,13 @@ typedef struct {
     fp16 *hb; // buffer for hidden dimension in the ffn (hidden_dim,)
     fp16 *hb2; // buffer for hidden dimension in the ffn (hidden_dim,)
     fp16 *q; // query (dim,)
-    fp16 *k; // key (dim,)
-    fp16 *v; // value (dim,)
+    fp16 *k; // key (kv_dim,)
+    fp16 *v; // value (kv_dim,)
     fp16 *att; // buffer for scores/attention values (n_heads, seq_len)
     fp16 *logits; // output logits (vocab_size, )
     // kv cache
-    fp16* key_cache;   // (layer, seq_len, dim)
-    fp16* value_cache; // (layer, seq_len, dim)
+    fp16* key_cache;   // (layer, seq_len, kv_dim)
+    fp16* value_cache; // (layer, seq_len, kv_dim)
 } RunState;
 
 typedef struct {

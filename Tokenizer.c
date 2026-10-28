@@ -7,13 +7,16 @@ void build_tokenizer(Tokenizer* t, int vocab_size) {
     t->vocab = VOCAB;
     t->vocab_scores = VOCAB_SCORES;
     t->sorted_vocab = SORTED_VOCAB;
-    
+
+    // single-byte strings returned by decode() for the raw byte tokens <0x00>..<0xFF>
     for (int i = 0; i < 256; i++) {
         t->byte_pieces[i * 2] = (unsigned char)i;
         t->byte_pieces[i * 2 + 1] = '\0';
     }
 
     t->max_token_length = MAX_TOKEN_LENGTH;
+    // VOCAB_DATA holds all token strings one after the other, each terminated by '\0':
+    // point vocab[i] to the start of the i-th string
     int j=0;
     for (int i = 0; i < vocab_size; i++) {
         t->vocab[i] = &VOCAB_DATA[j];
@@ -28,14 +31,8 @@ char* decode(Tokenizer* t, int prev_token, int token) {
     // following BOS (1) token, sentencepiece decoder strips any leading whitespace (see PR #89)
     if (prev_token == 1 && piece[0] == ' ') { piece++; }
     // careful, some tokens designate raw bytes, and look like e.g. '<0x01>'
-    // parse this and convert and return the actual byte
+    // parse the two hex digits by hand (instead of sscanf) and return the actual byte
     unsigned char byte_val;
-    /*
-    if (sscanf(piece, "<0x%02hhX>", &byte_val) == 1) {
-        piece = (char*)t->byte_pieces + byte_val * 2;
-    }
-    */
-   // Instead of sscanf, we can use a simple if statement to check if the token is a byte token
     if(piece[0]=='<' && piece[1] == '0' && piece[2]=='x' && piece[5]=='>'){
         int cifra1, cifra2;
         if('0' <= piece[3] && piece[3]<= '9')
@@ -103,9 +100,9 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
     if (text == NULL)
         exit(1);
-    // create a temporary buffer that will store merge candidates of always two consecutive tokens
+    // temporary buffer for the merge candidates of two consecutive tokens
+    // it needs max_token_length*2 + 1 bytes: BUFF1 (L1) is large enough and is not in use during encoding
     char* str_buffer = (char* ) BUFF1;
-    // *2 for concat, +1 for null terminator +2 for UTF8 (in case max_token_length is 1)
     size_t str_len = 0;
 
     // start at 0 tokens
@@ -114,48 +111,39 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     // add optional BOS (=1) token, if desired
     if (bos) tokens[(*n_tokens)++] = 1;
 
-    // add_dummy_prefix is true by default
-    // so prepend a dummy prefix token to the input string, but only if text != ""
-    // TODO: pretty sure this isn't correct in the general case but I don't have the
-    // energy to read more of the sentencepiece code to figure out what it's doing
+    // like sentencepiece (add_dummy_prefix), prepend a space token to a non-empty text
     if (text[0] != '\0') {
         int dummy_prefix = str_lookup(" ", t->sorted_vocab, t->vocab_size);
         tokens[(*n_tokens)++] = dummy_prefix;
     }
 
-    // Okay UTF-8 time. This will get messy. Here is the reference from Wikipedia:
-    // Code point ↔ UTF-8 conversion
-    // First code point	Last code point	Byte 1	Byte 2	Byte 3	Byte 4
-    // U+0000	U+007F	    0xxxxxxx
-    // U+0080	U+07FF	    110xxxxx	10xxxxxx
-    // U+0800	U+FFFF	    1110xxxx	10xxxxxx	10xxxxxx
-    // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
+    // UTF-8 encodes a code point in 1 to 4 bytes:
+    // First code point   Last code point   Byte 1     Byte 2     Byte 3     Byte 4
+    // U+0000             U+007F            0xxxxxxx
+    // U+0080             U+07FF            110xxxxx   10xxxxxx
+    // U+0800             U+FFFF            1110xxxx   10xxxxxx   10xxxxxx
+    // U+10000            U+10FFFF          11110xxx   10xxxxxx   10xxxxxx   10xxxxxx
 
     // process the raw (UTF-8) byte sequence of the input string
     for (char *c = text; *c != '\0'; c++) {
 
-        // reset buffer if the current byte is ASCII or a leading byte
-        // 0xC0 is 11000000, so (*c & 0xC0) keeps the first 2 bits and zeros the rest
-        // 0x80 is 10000000
-        // in UTF-8, all continuation bytes start with "10" in first two bits
-        // so in English this is: "if this byte is not a continuation byte"
+        // continuation bytes start with the bits 10 (checked with the mask 0xC0 = 11000000):
+        // any other byte (ASCII 0x... or leading 11...) starts a new code point, so reset the buffer
         if ((*c & 0xC0) != 0x80) {
-            // this byte must be either a leading byte (11...) or an ASCII char (0x...)
-            // => reset our location, as we're starting a new UTF-8 codepoint
             str_len = 0;
         }
 
         // append the current byte to the buffer
-        str_buffer[str_len++] = *c; // ++ is post-increment, incremented after this line
+        str_buffer[str_len++] = *c;
         str_buffer[str_len] = '\0';
 
-        // while the next character is a continuation byte, continue appending
-        // but if there are too many of them, just stop to avoid overruning str_buffer size.
+        // while the next byte is a continuation byte, continue appending
+        // (at most 4 bytes, to avoid overrunning str_buffer)
         if ((*(c+1) & 0xC0) == 0x80 && str_len < 4) {
             continue;
         }
 
-        // ok c+1 is not a continuation byte, so we've read in a full codepoint
+        // c+1 is not a continuation byte, so we've read in a full code point
         int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
 
         if (id != -1) {
@@ -172,7 +160,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
         str_len = 0; // protect against a sequence of stray UTF8 continuation bytes
     }
 
-    // merge the best consecutive pair each iteration, according the scores in vocab_scores
+    // BPE: at each iteration, merge the consecutive pair with the highest score in vocab_scores
     while (1) {
         fp16 best_score = -1e10;
         int best_id = -1;
@@ -183,7 +171,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
             sprintf(str_buffer, "%s%s", t->vocab[tokens[i]], t->vocab[tokens[i+1]]);
             int id = str_lookup(str_buffer, t->sorted_vocab, t->vocab_size);
             if (id != -1 && t->vocab_scores[id] > best_score) {
-                // this merge pair exists in vocab! record its score and position
+                // this merge pair exists in vocab: record its score and position
                 best_score = t->vocab_scores[id];
                 best_id = id;
                 best_idx = i;
