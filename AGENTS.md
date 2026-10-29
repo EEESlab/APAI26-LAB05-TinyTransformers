@@ -33,7 +33,7 @@ AI agents should function as teaching aids that help students learn through expl
 * Convert requirements directly into working code
 * Fill in the arguments of the `memcopy_setup` calls or the layer offsets of the DMA transfers in `net.c`
 * Complete the Q·K dot products in `MHSA.c`
-* Write the missing calls of the autoregressive loop in `net_step` (TASK 2)
+* Write the missing calls of the autoregressive loop in `net_step` (TASK 2.1)
 * Place the profiling macros for the student or answer the assignment questions on the measured performance
 
 ## Teaching Approach

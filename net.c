@@ -103,10 +103,17 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         // transfer the weights for the matmul calculating the V tensor 
         pi_cl_dma_copy_t kv_weight;
         /**
-         * TASK 1:
-         * 
-         * Complete this function. Be aware: the execution of the matmul is down in the code, not here.
-         * memcopy_setup is defined in this file: look inside the function to understand the arguments.
+         * TASK 1.2.
+         *
+         * Start the L2 -> L1 transfer of the V weights of layer l. The transfer only starts here:
+         * the V matmul that uses these weights comes further down, so the DMA runs in the
+         * background while the cores compute the RMSNorm.
+         *
+         * Fill in the first three arguments of memcopy_setup (defined at the top of this file):
+         *  - ext:  source in L2. w->wv holds the V weights of ALL layers, stored one after the other
+         *          (see memory_map_weights in net_utils.c): where do the weights of layer l start?
+         *  - loc:  destination in L1. The V weights (and later the K weights) go into BUFF_W_2.
+         *  - size: in BYTES, not elements. The V weights of one layer are a kv_dim x dim matrix.
          */
         memcopy_setup(,,,PI_CL_DMA_DIR_EXT2LOC,&kv_weight);
 
@@ -137,10 +144,14 @@ fp16* forward(Transformer* transformer, int token, int pos) {
         // transfer the weights for the matmul calculating the Q tensor 
         pi_cl_dma_copy_t q_weight;
         /**
-         * TASK 1:
-         * 
-         * Complete this function. Be aware: the execution of the matmul is down in the code, not here.
-         * memcopy_setup is defined in this file: look inside the function to understand the arguments.
+         * TASK 1.2.
+         *
+         * Start the L2 -> L1 transfer of the Q weights of layer l, so that it overlaps with the V matmul.
+         * Same idea as the V transfer above, but:
+         *  - ext:  the Q weights are in w->wq, and the Q weights of one layer are a dim x dim matrix.
+         *  - loc:  the Q weights use their own buffer, BUFF_W_1: BUFF_W_2 still holds the V weights,
+         *          which the V matmul is using while this transfer runs.
+         *  - size: in BYTES, not elements.
          */
         memcopy_setup(,,,PI_CL_DMA_DIR_EXT2LOC,&q_weight);
 
@@ -153,10 +164,13 @@ fp16* forward(Transformer* transformer, int token, int pos) {
 
         // transfer the weights for the matmul calculating the K tensor
         /**
-         * TASK 1:
+         * TASK 1.2.
          *
-         * Set the offset of the K weights of layer l inside w->wk (size, destination and direction are the same as the V transfer).
-         * The dimensions of the KV weights are l, dim, kv_dim.
+         * The V matmul is done, so its weight buffer can be overwritten with the K weights of layer l.
+         * We reuse the kv_weight descriptor of the V transfer: size, destination and direction stay
+         * the same, only the source address in L2 changes.
+         * Set the offset of layer l inside w->wk: like w->wv, it stores the K weights of all layers
+         * one after the other, each a kv_dim x dim matrix (i.e. w->wk is laid out as [n_layers][kv_dim][dim]).
          */
         kv_weight.ext = (uint32_t) (w->wk + /*Offset of layer l*/);
         pi_cl_dma_memcpy(&kv_weight);
@@ -412,36 +426,40 @@ void net_step(){
     int* prompt_tokens = PROMPT_TOKENS;
 
     /**
-     * TASK 2: 
-     * 
-     * Complete the code of the autoregressive phase with the missing steps.
-     * UNCOMMENT THE CODE BELOW, FIRST!!
+     * TASK 2.1:
+     *
+     * Complete the code of the autoregressive phase: replace each MISSING_FUNCTION with the
+     * function that performs that step. The arguments are already in place.
+     * All the functions are already declared and defined in the .c files of this lab.
      */
 
-    //Missing function with these arguments: (&tokenizer, PROMPT, 1, 0, prompt_tokens, &num_prompt_tokens);
+    // split the prompt string into tokens
+    MISSING_FUNCTION(&tokenizer, PROMPT, 1, 0, prompt_tokens, &num_prompt_tokens);
 
-    // token = prompt_tokens[0];
-    // // pos counts all tokens, prompt included: at most STEPS tokens are processed
-    // for(int pos = 0; pos < steps; pos++ ) {
+    token = prompt_tokens[0];
+    // pos counts all tokens, prompt included: at most STEPS tokens are processed
+    for(int pos = 0; pos < steps; pos++ ) {
 
-    //     log = 0; //Missing function with these arguments: (&transformer, token, pos);
-        
-    //     if(pos < num_prompt_tokens -1)
-    //         next = prompt_tokens[pos+1];
-    //     else{
-    //         next = 0; //Missing function with these arguments: (&sampler, log);
-    //     }
-        
-    //     // token 1 (BOS) delimits sequences: the model emits it to end the story
-    //     if(next==1)
-    //         break; 
-        
-    //     char* piece = 0; //Missing function with these arguments: (&tokenizer, token, next);
-        
-    //     safe_printf(piece);
+        // run the model on the current token to get the logits of the next one
+        log = MISSING_FUNCTION(&transformer, token, pos);
 
-    //     token = next;
-    // }
+        if(pos < num_prompt_tokens -1)
+            next = prompt_tokens[pos+1];    // still processing the prompt: the next token is given
+        else{
+            next = MISSING_FUNCTION(&sampler, log);    // pick the next token from the logits
+        }
+
+        // token 1 (BOS) delimits sequences: the model emits it to end the story
+        if(next==1)
+            break;
+
+        // convert the token back to text
+        char* piece = MISSING_FUNCTION(&tokenizer, token, next);
+
+        safe_printf(piece);
+
+        token = next;
+    }
 
     printf("\n");
     return;

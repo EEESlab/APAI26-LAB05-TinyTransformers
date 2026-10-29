@@ -34,19 +34,30 @@ void llama2_mhsa_fp16_cl(void *llama2_mhsa_args){
                 v2f16 temp2 = (v2f16) {0, 0};
                 v2f16 temp3 = (v2f16) {0, 0};
                 v2f16 temp4 = (v2f16) {0, 0};
+
                 v2f16 A, B1, B2, B3, B4;
-                for (int i = 0; i < head_size; i+=2) { //+=2 because each vector is composed of 2 elmenets
+
+                for (int i = 0; i < head_size; i+=2) { //+=2 because each v2f16 vector holds 2 elements
                     A = *((v2f16*) &q[i]);
+                    
                     B1 = *((v2f16*) &k[i]);
                     B2 = *((v2f16*) &k[i + kv_dim]);
                     B3 = *((v2f16*) &k[i + 2*kv_dim]);
                     B4 = *((v2f16*) &k[i + 3*kv_dim]);
+
                     /**
-                     * TASK 1:
+                     * TASK 1.3.
+                     *
+                     * Accumulate the dot products between the query q and the keys of the 4 timesteps t..t+3,
+                     * along the head_size dimension. The loop is unrolled over 4 keys, so that each element of
+                     * the query (A) is loaded once and reused for all 4 keys.
                      * 
-                     * Complete the code with the scalar product between the Query Q and the Key K, among the embedding dimensions. 
-                     * We already extracted the values from the buffers: what do you need to do here?
-                     * Remember you have multiple keys for each query.  
+                     *  - A:      elements i and i+1 of the query
+                     *  - B1..B4: elements i and i+1 of the keys at timesteps t, t+1, t+2, t+3
+                     *  - temp1..temp4: one accumulator per key
+                     * 
+                     * Arithmetic operators on v2f16 work element-wise on both lanes: each accumulator keeps
+                     * two partial sums, which are added together after the loop (see att[t] below).
                      */
                 }
 
@@ -76,14 +87,17 @@ void llama2_mhsa_fp16_cl(void *llama2_mhsa_args){
                 
                 v2f16 temp = (v2f16) {0, 0};
                 v2f16 A,B;
+
                 for (int i = 0; i < head_size; i+=2) {
                     A = *((v2f16*) &q[i]);
                     B = *((v2f16*) &k[i]);
+
                     /**
-                     * TASK 1:
-                     * 
-                     * Complete the code with the scalar product along the embedding dimensions. 
-                     * We already extracted the values from the buffers: what do you need to do here?
+                     * TASK 1.3.
+                     *
+                     * Same as above, for a single key: this loop handles the last timesteps when the
+                     * number of keys (pos+1) is not a multiple of 4.
+                     * Accumulate the dot product between the query (A) and the key at timestep t (B) into temp.
                      */
                 }
                 // save the score to the attention buffer
